@@ -1,13 +1,17 @@
-import csv, sys, argparse, math
+import argparse
+import csv
+import math
+import sys
 from argparse import RawTextHelpFormatter
 
-EARTH_RADIUS = 6372797.560856;
+EARTH_RADIUS = 6372797.560856
+
 
 # holds Transfer metrics between stops
 class TransferMetrics:
-    def __init__(self, from_stop_id, to_stop_id,  transfer_type, min_transfer_time):
-        self.from_stop_id = from_stop_id;
-        self.to_stop_id = to_stop_id;
+    def __init__(self, from_stop_id, to_stop_id, transfer_type, min_transfer_time):
+        self.from_stop_id = from_stop_id
+        self.to_stop_id = to_stop_id
         self.transfer_type = transfer_type
         self.min_transfer_time = min_transfer_time
 
@@ -16,109 +20,105 @@ class TransferMetrics:
 
 
 class Stop:
-    def __init__(self, stop_id, lon, lat, location_type):
-        self.stop_id = stop_id
-        self.lon = lon
+    def __init__(self, sid, lon, lat, location_type):
+        self.sid = sid
         self.lat = lat
+        self.lon = lon
         self.location_type = location_type
-        
-    def __str__ (self):
-        return self.stop_id + "," + self.lon + "," + self.lat;
+
+    def __str__(self):
+        return self.sid + "," + self.lon + "," + self.lat + "," + self.location_type
+
+    def to_dict(self):
+        return {
+            'sid': self.sid,
+            'lon': self.lon,
+            'lat': self.lat,
+            'location_type': self.location_type
+        }
 
 
-def read_file(input):
+def read_file(input_file):
     stops = dict()
 
-    with open('stops.txt', 'r') as f:
+    with open(input_file, encoding="utf8", mode='r') as f:
         reader = csv.reader(f)
         header = next(reader)
-        stop_idInd = header.index("stop_id")
-        stop_lonInd = header.index("stop_lon")
-        stop_latInd = header.index("stop_lat")
+        stop_id_ind = header.index("stop_id")
+        stop_lon_ind = header.index("stop_lon")
+        stop_lat_ind = header.index("stop_lat")
+        location_type_ind = header.index("location_type")
 
         for row in reader:
-            dataTpl = Stop(row[stop_idInd], row[stop_lonInd], row[stop_latInd])
-            # Store the stop data: id, lon, Lat
-            stopID = row[stop_idInd]
-            stops[stopID] = dataTpl
-
+            # we want only stops of type 0 (which are stops and not physical station or entrance - see GTFS docs)
+            stop_location_type = row[location_type_ind]
+            if stop_location_type == '0':
+                data_tpl = Stop(row[stop_id_ind], row[stop_lon_ind], row[stop_lat_ind], row[location_type_ind])
+                # Store the stop data: id, lon, Lat
+                stop_id = row[stop_id_ind]
+                stops[stop_id] = data_tpl
     return stops
 
 
-def calculate_transfers():
+def calculate_transfers(stops, walking_speed, transfer_time, max_distance):
+    transfers = list()
+    for stop_1_ind in stops:
+        stop_1 = stops[stop_1_ind]
+        for stop_2_ind in stops:
+            stop_2 = stops[stop_2_ind]
+            # if stop_1.sid != stop_2.sid: - Navitia's rust code doesnt ignore this
+            man_distance = calculate_man_distance(stop_1, stop_2)
+            if man_distance <= max_distance:
+                print(man_distance)
+                transfers.append(TransferMetrics(stop_1.sid, stop_2.sid, 2, int(man_distance / walking_speed)
+                                                 + transfer_time))
+    return transfers
 
+def calculate_man_distance(stop1, stop2):
+    phi1 = math.radians(float(stop1.lat))
+    phi2 = math.radians(float(stop2.lat))
+    lambda1 = math.radians(float(stop1.lon))
+    lambda2 = math.radians(float(stop2.lon))
 
-
-
-    network = list()
-    #iterate over source stops
-    for sstopA in stops:
-        stopA = stops[sstopA]
-        for sstopB in stops:
-            stopB = stops[sstopB]
-            routeCounter = 0
-    #dont work on the same stop
-            if (stopA.id != stopB.id):
-    #iterate over stopA routes
-                for datumA in stopA.metrics:
-                    routeA = datumA.route
-                    seqA = datumA.seq
-                    for datumB in stopB.metrics:
-                        routeB = datumB.route
-                        seqB = datumB.seq
-                        if routeA == routeB and int(seqA)+1 == int(seqB):
-                            #network.append(TruplteStop(stopA.id, stopB.id,routeCounter))
-                            routeCounter += 1
-                if routeCounter > 0:
-                    network.append(TruplteStop(stopA.id, stopB.id,routeCounter))
-
-    # The arcs need to be defined by the node ids not the stopIDs
-    stopsToNodes = dict()
-
-    with open("OnlyNodesAndEdges.net", "w") as text_file:
-        stopsLen = len(stops)
-        print (f"*Vertices {stopsLen}", file=text_file)
-        for ind, stop in enumerate(stops):
-            #print (f"{ind+1} \"{stops[stop].name}\" \"{stops[stop].lon}\" \"{stops[stop].lat}\" \"{stops[stop].id}\"", file=text_file)
-            print (f"{ind+1} \"{stops[stop].id}\"", file=text_file)
-            stopsToNodes[stop] = ind+1
-
-        print (f"*Arcs", file=text_file)
-        for stop in network:
-            print (f"{stopsToNodes[stop.stopA]} {stopsToNodes[stop.stopB]} {stop.numOfLines} ", file=text_file)
-
-
-
-
-def calculate_man_distance (stopOne, stopTwo):
-    phi1 = stopOne.stop_lat.to_radians()
-    phi2 = stopTwo.stop_lat.to_radians()
-    lambda1 = stopOne.stop_lon.to_radians()
-    lambda2 = stopOne.stop_lon.to_radians()
-
-    x = math.sin((phi2 - phi1) / 2)**2
-    y = math.cos(phi1) * math.cos(phi2) * math.sin((lambda2 - lambda1) / 2.)**2;
+    x = math.sin((phi2 - phi1) / 2) ** 2
+    y = math.cos(phi1) * math.cos(phi2) * math.sin((lambda2 - lambda1) / 2.) ** 2
 
     return 2 * EARTH_RADIUS * math.asin(math.sqrt(x + y))
 
 
-def main (argv):
+def write_file(output, transfers):
+    with open(output, "w") as text_file:
+        print(f"from_stop_id,to_stop_id,transfer_type,min_transfer_time", file=text_file)
+        for ind, transfer in enumerate(transfers):
+            transfer_datum = transfers[ind]
+            print(f"{transfer_datum.from_stop_id},{transfer_datum.to_stop_id},{transfer_datum.transfer_type}, "
+                  f"{transfer_datum.min_transfer_time} ", file=text_file)
+
+
+def main(argv):
     parser = argparse.ArgumentParser(formatter_class=RawTextHelpFormatter)
     parser.add_argument('input', nargs='?', help='input file', default='stops.txt')
-    parser.add_argument('out', nargs='?', help='output file', default='transfers.txt')
-    parser.add_argument('walking_speed', type=float, nargs='?', help='The walking speed is meters per second.\n '
-                                                          'You may want to divide your initial speed by \n '
-                                                          'sqrt(2) to simulate Manhattan distances', default=0.785)
-    parser.add_argument('transfer-time', type=int, nargs='?', help='Transfer time in seconds', default='0')
-    parser.add_argument('max-distance', type=float, nargs='?', help='The max distance in meters to compute the transfer',
+    parser.add_argument('output', nargs='?', help='output file', default='transfers.txt')
+    parser.add_argument('walking_speed', type=float, nargs='?',
+                        help='The walking speed is meters per second.\n '
+                             'You may want to divide your initial speed by \n '
+                             'sqrt(2) to simulate Manhattan distances', default=0.785)
+    parser.add_argument('transfer_time', type=int, nargs='?', help='Transfer time in seconds',
+                        default='0')
+    parser.add_argument('max_distance', type=float, nargs='?',
+                        help='The max distance in meters to compute the transfer',
                         default=500)
 
     args = parser.parse_args(argv)
 
     stops = read_file(args.input)
-
-    calculate_man_distance(stops)
+    transfers = calculate_transfers(stops, args.walking_speed, args.transfer_time, args.max_distance)
+    write_file(args.output, transfers)
     print("done")
 
+
 if __name__ == "__main__":
-   main(sys.argv[1:])
+    main(sys.argv[1:])
+
+
+# USE https://stackoverflow.com/questions/46572860/speeding-up-a-nested-for-loop-through-two-pandas-dataframes
